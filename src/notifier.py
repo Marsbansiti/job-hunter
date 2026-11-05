@@ -157,3 +157,101 @@ class TelegramNotifier:
         """Send an error notification (plain text, no markdown)."""
         text = f"⚠️ Job Hunter - Lỗi:\n\n{error_msg}"
         return await self.send_message(text, parse_mode=None)
+
+
+class TelegramUserNotifier:
+    """Send job notifications directly through a Telegram user session (Telethon)."""
+
+    def __init__(self, api_id: int, api_hash: str, session_file: str, target_chat: str | int = "me") -> None:
+        self._api_id = api_id
+        self._api_hash = api_hash
+        self._session_file = session_file
+        self._target_chat = target_chat
+        self._client = None
+
+    async def _get_client(self):
+        from telethon import TelegramClient
+        if self._client is None or not self._client.is_connected():
+            self._client = TelegramClient(self._session_file, self._api_id, self._api_hash)
+            await self._client.connect()
+        return self._client
+
+    async def send_message(self, text: str, parse_mode: str = "md") -> bool:
+        try:
+            client = await self._get_client()
+            if not await client.is_user_authorized():
+                logger.error("Telethon user session is not authorized.")
+                return False
+            await client.send_message(self._target_chat, text, parse_mode=parse_mode)
+            logger.debug("Telegram user message sent successfully to %s", self._target_chat)
+            return True
+        except Exception as e:
+            logger.error("Failed to send Telethon message: %s", e)
+            return False
+
+    async def send_jobs(self, jobs: list[Job]) -> int:
+        if not jobs:
+            return 0
+        BATCH_SIZE = 10
+        batches = [jobs[i:i + BATCH_SIZE] for i in range(0, len(jobs), BATCH_SIZE)]
+        total_pages = len(batches)
+        sent_count = 0
+
+        for page_num, batch in enumerate(batches, start=1):
+            header = f"🔔 **Tìm thấy {len(batch)} job mới!**"
+            if total_pages > 1:
+                header += f" (trang {page_num}/{total_pages})"
+            header += "\n"
+
+            lines = [header]
+            for i, job in enumerate(batch, start=1):
+                lines.append(
+                    f"{i}. [{job.title}]({job.link})\n"
+                    f"    🏢 `{job.source.upper()}`\n"
+                )
+            msg = "\n".join(lines)
+            if await self.send_message(msg):
+                sent_count += len(batch)
+            if page_num < total_pages:
+                await asyncio.sleep(1.0)
+        return sent_count
+
+    async def send_summary(self, total_scraped: int, new_count: int, total_in_db: int) -> bool:
+        text = (
+            f"📊 **Job Hunter - Tổng kết**\n\n"
+            f"🔍 Đã quét: `{total_scraped}` jobs\n"
+            f"🆕 Job mới: `{new_count}`\n"
+            f"💾 Tổng trong DB: `{total_in_db}`\n\n"
+            f"⏰ Lần chạy tiếp: ~4 tiếng nữa"
+        )
+        return await self.send_message(text)
+
+    async def send_error_report(self, error_msg: str) -> bool:
+        text = f"⚠️ **Job Hunter - Lỗi:**\n\n{error_msg}"
+        return await self.send_message(text)
+
+    async def close(self) -> None:
+        if self._client and self._client.is_connected():
+            await self._client.disconnect()
+
+
+def create_notifier():
+    """Create either Bot notifier or User (Telethon) notifier based on config."""
+    import os
+    from src import config
+    if config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_ID:
+        return TelegramNotifier(config.TELEGRAM_BOT_TOKEN, config.TELEGRAM_CHAT_ID)
+    if config.TELEGRAM_API_ID and config.TELEGRAM_API_HASH:
+        session_path = str(config.BASE_DIR / config.TELEGRAM_SESSION) if not os.path.isabs(config.TELEGRAM_SESSION) else config.TELEGRAM_SESSION
+        target = config.TELEGRAM_TARGET_CHAT or config.TELEGRAM_CHAT_ID or "me"
+        try:
+            target = int(target)
+        except (ValueError, TypeError):
+            pass
+        return TelegramUserNotifier(
+            api_id=int(config.TELEGRAM_API_ID),
+            api_hash=config.TELEGRAM_API_HASH,
+            session_file=session_path,
+            target_chat=target,
+        )
+    return None

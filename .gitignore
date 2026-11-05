@@ -44,3 +44,6 @@ htmlcov/
 
 # Egg info (editable install)
 *.egg-info/
+
+*.session
+*.session-journal

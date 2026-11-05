@@ -54,19 +54,22 @@ class Job:
 # Keyword relevance filter
 # ──────────────────────────────────────────────
 # Job MUST contain at least one tech keyword (to avoid unrelated jobs like sales)
-TECH_KEYWORDS = ["java", "spring", "backend", "back-end", "developer", "engineer", "lập trình"]
+TECH_KEYWORDS = [
+    "java", "spring", "backend", "back-end", "developer", "engineer",
+    "lập trình", "lap trinh", "lap-trinh", "software", "cntt",
+]
 # Job MUST contain at least one level keyword (to filter out senior/lead positions)
-LEVEL_KEYWORDS = ["intern", "thực tập", "fresher"]
+LEVEL_KEYWORDS = ["intern", "thực tập", "thuc tap", "thuc-tap", "fresher"]
 # Negative keywords — immediately disqualify
 EXCLUDE_KEYWORDS = ["senior", "lead", "manager", "principal", "architect", "staff", "expert", "trưởng"]
 
 
-def _is_relevant_job(title: str) -> bool:
+def _is_relevant_job(title: str, allow_all_levels: bool = False) -> bool:
     """Check if a job title is an intern/fresher-level Java/Spring job.
 
     Rules:
       1. Must contain at least one TECH keyword (java, spring, backend, etc.)
-      2. Must contain at least one LEVEL keyword (intern, fresher, junior, etc.)
+      2. Must contain at least one LEVEL keyword (intern, fresher, junior, etc.) [skipped if allow_all_levels=True]
       3. Must NOT contain any EXCLUDE keyword (senior, lead, manager, etc.)
     """
     title_lower = title.lower()
@@ -79,6 +82,9 @@ def _is_relevant_job(title: str) -> bool:
     has_tech = any(kw in title_lower for kw in TECH_KEYWORDS)
     if not has_tech:
         return False
+
+    if allow_all_levels:
+        return True
 
     # Rule 2: must be intern/fresher/junior level
     has_level = any(kw in title_lower for kw in LEVEL_KEYWORDS)
@@ -327,7 +333,11 @@ class JobScraper:
 
     # ── TopCV ──────────────────────────────────
 
-    async def scrape_topcv(self) -> list[Job]:
+    async def scrape_topcv(
+        self,
+        keywords: Optional[list[str]] = None,
+        allow_all_levels: bool = False,
+    ) -> list[Job]:
         """Scrape TopCV.vn using Playwright with cookie warmup.
 
         TopCV blocks raw httpx from VPS IPs (403 Forbidden).
@@ -338,104 +348,133 @@ class JobScraper:
         jobs: list[Job] = []
         page: Optional[Page] = None
 
-        search_keywords = ["java", "java spring", "java spring boot"]
+        if keywords is None:
+            search_keywords = [
+                "thuc-tap-sinh-lap-trinh",
+                "thuc-tap-sinh-it",
+                "thuc-tap-java",
+                "fresher-java",
+                "java",
+                "java spring",
+                "java spring boot",
+            ]
+        else:
+            search_keywords = keywords
 
         try:
             page = await self._new_stealth_page()
 
             # Step 1: Visit homepage to warm up cookies (bypass 403)
             logger.info("[TopCV] Warming up cookies via homepage")
-            await page.goto("https://www.topcv.vn/", wait_until="domcontentloaded", timeout=30000)
-            await self._random_delay(2, 4)
-            await self._human_scroll(page, steps=2)
-            await self._human_mouse_move(page, moves=2)
-            await self._random_delay(1, 3)
+            try:
+                await page.goto("https://www.topcv.vn/", wait_until="domcontentloaded", timeout=config.PAGE_LOAD_TIMEOUT)
+                await self._random_delay(2, 4)
+                await self._human_scroll(page, steps=2)
+                await self._human_mouse_move(page, moves=2)
+                await self._random_delay(1, 3)
+            except Exception as e:
+                logger.warning("[TopCV] Homepage cookie warmup warning: %s", e)
 
             for kw_idx, keyword in enumerate(search_keywords):
                 url = f"https://www.topcv.vn/tim-viec-lam-{keyword.replace(' ', '-')}?type_keyword=0&sba=1"
                 logger.info("[TopCV] Navigating to %s", url)
 
-                await page.goto(url, wait_until="networkidle", timeout=45000)
-                await self._random_delay(2, 4)
-                await self._human_scroll(page, steps=3)
-                await self._random_delay(1, 2)
-
-                # Wait for Vue.js to render job cards
                 try:
-                    await page.wait_for_selector(
-                        ".job-item-search-result, .job-list-search-result, a[href*='/viec-lam/'][href*='.html']",
-                        timeout=15000,
-                    )
-                except Exception:
-                    logger.warning("[TopCV] Job selectors not rendered for '%s'", keyword)
+                    await page.goto(url, wait_until="domcontentloaded", timeout=config.PAGE_LOAD_TIMEOUT)
+                    await self._random_delay(2, 4)
+                    await self._human_scroll(page, steps=3)
+                    await self._random_delay(1, 2)
 
-                # JS extraction — TopCV Vue.js renders job data client-side
-                raw_jobs = await page.evaluate("""() => {
-                    const results = [];
-                    // Strategy 1: job card links with .html
-                    const links = document.querySelectorAll('a[href*="/viec-lam/"][href*=".html"]');
-                    links.forEach(a => {
-                        const href = a.getAttribute('href') || '';
-                        // Skip category/search links
-                        if (href.includes('/tim-viec-lam')) return;
-                        let title = '';
-                        // Try h3/h2/span inside <a>
-                        const titleEl = a.querySelector('h3, h2, span.title, .job-title');
-                        if (titleEl) title = titleEl.textContent.trim();
-                        if (!title) title = a.getAttribute('title') || '';
-                        if (!title) title = a.textContent.trim();
-                        // Fallback: extract from URL slug
-                        if (!title && href) {
-                            const parts = href.split('/viec-lam/');
-                            if (parts[1]) {
-                                let slug = parts[1].split('/')[0];
-                                slug = slug.replace(/-\\d+\\.html.*$/, '');
-                                title = slug.replace(/-/g, ' ');
+                    # Wait for Vue.js to render job cards
+                    try:
+                        await page.wait_for_selector(
+                            ".job-item-search-result, .job-list-search-result, a[href*='/viec-lam/'][href*='.html']",
+                            timeout=15000,
+                        )
+                    except Exception:
+                        logger.warning("[TopCV] Job selectors not rendered for '%s'", keyword)
+
+                    # JS extraction — TopCV Vue.js renders job data client-side
+                    raw_jobs = await page.evaluate("""() => {
+                        const results = [];
+                        // Strategy 1: Find job cards directly (TopCV cards)
+                        const cards = document.querySelectorAll('.job-item-search-result, .job-item-2, .job-item, .box-item');
+                        cards.forEach(card => {
+                            let titleEl = card.querySelector('h3 a, h2 a, .job-title a, .title a');
+                            if (!titleEl) {
+                                titleEl = Array.from(card.querySelectorAll('a[href*="/viec-lam/"]')).find(a => a.textContent.trim().length > 5);
                             }
+                            if (titleEl) {
+                                const href = titleEl.getAttribute('href') || '';
+                                let title = titleEl.textContent.trim();
+                                if (!title) title = titleEl.getAttribute('title') || '';
+                                if (href && title && title.length >= 5) {
+                                    if (title.length > 200) title = title.substring(0, 100);
+                                    results.push({title: title, href: href});
+                                }
+                            }
+                        });
+                        // Strategy 2: Fallback scan links directly if no cards matched
+                        if (results.length === 0) {
+                            const links = document.querySelectorAll('a[href*="/viec-lam/"][href*=".html"]');
+                            links.forEach(a => {
+                                const href = a.getAttribute('href') || '';
+                                if (href.includes('/tim-viec-lam')) return;
+                                let title = '';
+                                const h3 = a.closest('h3') || a.querySelector('h3, h2, span.title, .job-title, .title');
+                                if (h3) title = h3.textContent.trim();
+                                if (!title) title = a.getAttribute('title') || '';
+                                if (!title) title = a.textContent.trim();
+                                if (!title && href) {
+                                    const parts = href.split('/viec-lam/');
+                                    if (parts[1]) {
+                                        let slug = parts[1].split('/')[0];
+                                        slug = slug.replace(/-\\d+\\.html.*$/, '');
+                                        title = slug.replace(/-/g, ' ');
+                                    }
+                                }
+                                if (title && title.length > 200) title = title.substring(0, 100);
+                                if (href && title && title.length >= 5) {
+                                    results.push({title: title, href: href});
+                                }
+                            });
                         }
-                        // Skip very long text (probably grabbed whole card body)
-                        if (title && title.length > 200) title = title.substring(0, 100);
-                        if (href && title && title.length >= 5) {
-                            results.push({title: title, href: href});
-                        }
-                    });
-                    return results;
-                }""")
+                        return results;
+                    }""")
 
-                logger.info("[TopCV] JS extracted %d raw job entries for '%s'", len(raw_jobs), keyword)
+                    logger.info("[TopCV] JS extracted %d raw job entries for '%s'", len(raw_jobs), keyword)
 
-                seen: set[str] = set()
-                kw_jobs: list[Job] = []
-                for entry in raw_jobs:
-                    title = entry.get("title", "").strip()
-                    href = entry.get("href", "")
+                    seen: set[str] = set()
+                    kw_jobs: list[Job] = []
+                    for entry in raw_jobs:
+                        title = entry.get("title", "").strip()
+                        href = entry.get("href", "")
 
-                    if not title or not href:
-                        continue
+                        if not title or not href:
+                            continue
 
-                    full_link = urljoin("https://www.topcv.vn", href)
-                    full_link = full_link.split("?")[0]
+                        full_link = urljoin("https://www.topcv.vn", href)
+                        full_link = full_link.split("?")[0]
 
-                    if full_link in seen:
-                        continue
-                    seen.add(full_link)
+                        if not _is_relevant_job(title, allow_all_levels=allow_all_levels):
+                            logger.debug("[TopCV] Skipping irrelevant: %s", title[:60])
+                            continue
 
-                    if not _is_relevant_job(title):
-                        logger.debug("[TopCV] Skipping irrelevant: %s", title[:60])
-                        continue
+                        if full_link in seen:
+                            continue
+                        seen.add(full_link)
 
-                    kw_jobs.append(Job(
-                        title=title,
-                        link=full_link,
-                        source="topcv",
-                    ))
+                        kw_jobs.append(Job(
+                            title=title,
+                            link=full_link,
+                            source="topcv",
+                        ))
 
-                jobs.extend(kw_jobs)
-                logger.info("[TopCV] Keyword '%s': found %d relevant jobs", keyword, len(kw_jobs))
+                    jobs.extend(kw_jobs)
+                    logger.info("[TopCV] Keyword '%s': found %d relevant jobs", keyword, len(kw_jobs))
 
-                if kw_jobs:
-                    logger.info("[TopCV] Got %d jobs, skipping remaining keywords", len(jobs))
-                    break
+                except Exception as kw_err:
+                    logger.warning("[TopCV] Error scraping keyword '%s': %s", keyword, kw_err)
 
                 if kw_idx < len(search_keywords) - 1:
                     await self._random_delay(3, 6)

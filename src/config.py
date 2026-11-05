@@ -3,9 +3,17 @@ Configuration module - Load environment variables and define constants.
 """
 
 import os
+import sys
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
+
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 # ──────────────────────────────────────────────
 # Load .env file
@@ -14,10 +22,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
 # ──────────────────────────────────────────────
-# Telegram Bot (from .env - NEVER hardcode)
+# Telegram Configuration (from .env - NEVER hardcode)
 # ──────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
+
+# Telegram MTProto User API Configuration (Telethon)
+TELEGRAM_API_ID: str = os.getenv("TELEGRAM_API_ID", "")
+TELEGRAM_API_HASH: str = os.getenv("TELEGRAM_API_HASH", "")
+TELEGRAM_SESSION: str = os.getenv("TELEGRAM_SESSION", "user.session")
+TELEGRAM_TARGET_CHAT: str = os.getenv("TELEGRAM_TARGET_CHAT", "me")
 
 # ──────────────────────────────────────────────
 # Search keywords
@@ -112,16 +126,11 @@ def setup_logging() -> None:
 
 
 def validate_config() -> bool:
-    """Check that required env vars are set. Returns True if valid."""
+    """Check that Telegram notifications can be sent via either Bot API or User API."""
     logger = logging.getLogger(__name__)
-    valid = True
-
-    if not TELEGRAM_BOT_TOKEN:
-        logger.error("TELEGRAM_BOT_TOKEN is not set in .env")
-        valid = False
-
-    if not TELEGRAM_CHAT_ID:
-        logger.error("TELEGRAM_CHAT_ID is not set in .env")
-        valid = False
-
-    return valid
+    has_bot = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
+    has_user = bool(TELEGRAM_API_ID and TELEGRAM_API_HASH)
+    if not has_bot and not has_user:
+        logger.error("Neither Telegram Bot (TELEGRAM_BOT_TOKEN) nor User API (TELEGRAM_API_ID) is configured in .env")
+        return False
+    return True

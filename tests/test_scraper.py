@@ -53,13 +53,12 @@ class TestJobScraperInit:
         assert scraper._browser is None
         assert scraper._context is None
 
-    def test_scraper_without_start_raises(self):
+    async def test_scraper_without_start_raises(self):
         """Using _new_stealth_page before start() should raise RuntimeError."""
         scraper = JobScraper()
 
         with pytest.raises(RuntimeError, match="Browser context not initialized"):
-            import asyncio
-            asyncio.get_event_loop().run_until_complete(scraper._new_stealth_page())
+            await scraper._new_stealth_page()
 
 
 class TestScraperDedup:
