@@ -30,8 +30,8 @@ TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
 # Telegram MTProto User API Configuration (Telethon)
 TELEGRAM_API_ID: str = os.getenv("TELEGRAM_API_ID", "")
 TELEGRAM_API_HASH: str = os.getenv("TELEGRAM_API_HASH", "")
-TELEGRAM_SESSION: str = os.getenv("TELEGRAM_SESSION", "user.session")
-TELEGRAM_TARGET_CHAT: str = os.getenv("TELEGRAM_TARGET_CHAT", "me")
+TELEGRAM_SESSION: str = os.getenv("TELEGRAM_SESSION", "")
+TELEGRAM_TARGET_CHAT: str = os.getenv("TELEGRAM_TARGET_CHAT", "")
 
 # ──────────────────────────────────────────────
 # Search keywords
